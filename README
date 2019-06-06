@@ -1,0 +1,61 @@
+README for Project2
+Shaoze Wang A92103590
+
+I decided not to compete for the espresso prize
+
+Basic Logics:
+Method: sr_handle_packets
+  If this is ARP packet, go to Method: process_arp_packet
+    If packet is a request
+      Check if the router has the MAC in the arp cache or is one of its interface
+        Make up ARP reply packet and send back to the request's sender.
+        Return and free all dynamic memory.
+      Check the IP address requested in the packet and broadcasr the request packet through the matching gateway.
+      Return and free all dynamic memory.
+    If packet is reply
+      (D1)Fetch the corresponding arereq and fill in the ether_dhost field of all pending packets for this arpreq and send them out.
+      Destroy the arpreq.
+      Return and free all dynamic memory.
+  If this is IP packet, go to Method: process_ip_packet
+    If the checksum doesn't make sense, return directly.
+    If the packet is meant for the router
+      If it is an ICMP ping request packet, then send back an ICMP ping reply packet with the exact same ICMP payload.
+      If it is a TCP/UDP packet, then send back an ICMP Destination Port Unreachable packet.
+      Return and free all dynamic memory.
+    If the packet is passing through
+      If the TTl expires, send back an ICMP TTL expire packet to the sender.
+        Return and free all dynamic memory.
+      If the packet's destination ip is not in the router's rtable.
+        Send an ICMP Destination Network Unreachable packet back to the sender.
+        Return and free all dynamic memory.
+      If the destination ip is not in the router's arpcache
+        (D2)Queue the packet onto the arpreq
+        Return and free all dynamic memory.
+      Send the packet directly with the arpcache entry available.
+      Return and free all dynamic memory.
+
+Method: sr_arpcache_sweepreqs
+  For arpreqs in the cache
+    If times_sent >= 5
+      (D2)Send an ICMP Destination Host packet back to every queued packet's sender.
+      Destroy this entry and continue.
+    Increase times_sent by 1 and update sent to current time.
+    Resend the arp request.
+    Return and free all dynamic memory.
+
+Some Decision Details:
+1. As marked in D1 in previous section, we try to send out all queued up packets. But the struct keeps all packets in a stack so if we want to send those packets by order of coming to the router, I wrote a recursive method that only starts sending packets when it reached the bottom of the stack, thus ensuring the FIFO order of the packets.
+
+2. As marked in D2 in previous section, we want to send ICMP Destination Host packet to all senders whose packets got queued up in an arpreq. But we don't know the next hop(ether_dhost) field for the ICMP packet, namely the previous hop of the packet queued up. To solve this problem, before queuing a packet onto the arpreq, I filled the ether_dhost field of the packet with its previous hop. This way, we could use the ether_dhost field to fill ICMP packet's ether_dhost field.
+
+3. During thr packet-forwarding process, I tend to make new packets that copy info the is the same from the original packet and fill in info that is not the same. In this way I could free up the packets right away after I sent the new packet out. The tradeoff is that I have to write a set of method that converts betwee network raw packets and host ethernet/ip/icmp/arp packets. The debugging process was more error-prone.
+
+Other mutility method I wrote:
+sr_packet:
+  sweep_req: called by process_arp_packet to send all queued packets in the arpreq
+
+sr_utils:
+  eth_struct_to_buf/buf_to_eth_struct: convert between raw network buf and host form ethernet header
+  ip_struct_to_buf/buf_to_ip_struct: convert between raw network buf and host form ip header
+  icmp_struct_to_buf/buf_to_icmp_struct: convert between raw network buf and host form icmp header
+  sr_longest_match: called to find a LPM for an ip address
